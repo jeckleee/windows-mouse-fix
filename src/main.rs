@@ -11,6 +11,8 @@ mod fonts;
 mod ipc;
 mod model;
 mod platform;
+#[cfg(windows)]
+mod startup;
 mod ui;
 mod updates;
 
@@ -18,7 +20,7 @@ fn main() -> eframe::Result {
     #[cfg(windows)]
     if !std::env::args_os().any(|arg| arg == "--settings") {
         if let Some(_instance) = platform::single_instance() {
-            backend::run();
+            backend::run(std::env::args_os().any(|arg| arg == "--startup"));
         }
         return Ok(());
     }

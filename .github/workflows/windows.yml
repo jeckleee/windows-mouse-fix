@@ -28,14 +28,54 @@ jobs:
       - name: Collect distribution files
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Path dist -Force | Out-Null
-          Copy-Item target/x86_64-pc-windows-msvc/release/windows-mouse-fix.exe dist/
-          Copy-Item LICENSE, README.md, THIRD_PARTY_NOTICES.md, THIRD_PARTY_LICENSES.txt dist/
-          New-Item -ItemType Directory -Path dist/assets -Force | Out-Null
-          Copy-Item assets/mouse.png dist/assets/
+          New-Item -ItemType Directory -Path dist/package -Force | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/windows-mouse-fix.exe dist/package/
+          Copy-Item LICENSE, README.md, THIRD_PARTY_NOTICES.md, THIRD_PARTY_LICENSES.txt dist/package/
+          New-Item -ItemType Directory -Path dist/package/assets -Force | Out-Null
+          Copy-Item assets/mouse.png dist/package/assets/
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $version = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages[0].version
+          $compiler = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (!(Test-Path $compiler)) { throw "Inno Setup 6 was not found" }
+          & $compiler "/DAppVersion=$version" installer/windows-mouse-fix.iss
+          if ($LASTEXITCODE -ne 0) { throw "Installer compilation failed" }
+      - name: Check install, upgrade and uninstall
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem dist/installer/*-setup.exe).FullName
+          $installDir = Join-Path $env:RUNNER_TEMP "wmf-install-check"
+          $arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$installDir`"")
+          foreach ($attempt in 1..2) {
+            $process = Start-Process $setup -ArgumentList $arguments -Wait -PassThru
+            if ($process.ExitCode -ne 0) { throw "Install/upgrade failed: $($process.ExitCode)" }
+            if ($attempt -eq 1) {
+              & icacls (Join-Path $installDir 'windows-mouse-fix.exe') /setintegritylevel L
+              if ($LASTEXITCODE -ne 0) { throw "Could not prepare low-integrity upgrade test" }
+            }
+          }
+          $exe = Join-Path $installDir 'windows-mouse-fix.exe'
+          if (!(Test-Path $exe)) { throw "Installed executable is missing" }
+          if ((Get-FileHash $exe).Hash -ne (Get-FileHash dist/package/windows-mouse-fix.exe).Hash) {
+            throw "Installed executable differs from build output"
+          }
+          $acl = & icacls $exe
+          if ($LASTEXITCODE -ne 0 -or ($acl -join "`n") -notmatch 'Medium Mandatory Level') {
+            throw "Installed executable does not have a medium integrity label"
+          }
+          $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+          New-Item $runKey -Force | Out-Null
+          New-ItemProperty $runKey -Name WindowsMouseFix -Value "`"$exe`" --startup" -PropertyType String -Force | Out-Null
+          $uninstall = Start-Process (Join-Path $installDir 'unins000.exe') -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
+          if ($uninstall.ExitCode -ne 0) { throw "Uninstall failed" }
+          if (Test-Path $exe) { throw "Uninstall left the application executable" }
+          if (Get-ItemProperty $runKey -Name WindowsMouseFix -ErrorAction SilentlyContinue) {
+            throw "Uninstall left its startup entry"
+          }
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: windows-mouse-fix-x64
-          path: dist/
+          name: windows-mouse-fix-installer-x64
+          path: dist/installer/*-setup.exe
           if-no-files-found: error
           retention-days: 14

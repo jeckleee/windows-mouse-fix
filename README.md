@@ -24,16 +24,20 @@
 
 目前主要支持 **Windows 11 x64**。其他 Windows 版本与 ARM64 原生构建尚未验证。
 
-在本仓库的 [Releases](https://github.com/jeckleee/windows-mouse-fix/releases) 页面查找发布包；如果尚无正式发布，可自行编译，或在 [Actions](https://github.com/jeckleee/windows-mouse-fix/actions) 中下载成功构建的 `windows-mouse-fix-x64` 产物。下载 Actions 产物可能需要登录 GitHub。
+在本仓库的 [Releases](https://github.com/jeckleee/windows-mouse-fix/releases) 页面查找发布包；如果尚无正式发布，可自行编译，或在 [Actions](https://github.com/jeckleee/windows-mouse-fix/actions) 中下载成功构建的 `windows-mouse-fix-installer-x64` 产物。下载 Actions 产物可能需要登录 GitHub。
 
-1. 解压发布包，运行 `windows-mouse-fix.exe`。无需安装额外的字体文件。
+1. 下载并运行 `windows-mouse-fix-版本号-windows-x64-setup.exe`（Actions ZIP 需要先解压）。安装和卸载需要管理员权限确认，默认安装到 `C:\Program Files\Windows Mouse Fix`。完成后从开始菜单打开程序，日常运行无需管理员权限或额外字体。
 2. 在“按钮”页面使用捕获区域添加操作，并为其选择动作或录制快捷键。
 3. 点击窗口关闭按钮，设置界面退出，按钮映射继续在后台生效。
 4. 双击托盘图标重新打开设置；右键图标选择“退出”，结束整个程序。
 
-如果出现“访问被拒绝 / 0x00000005”导致托盘注册失败，请先完全退出程序，再尝试右键 exe → **以管理员身份运行**。操作管理员权限的目标窗口时，也可能需要相应权限。程序不会自动提升权限。
+安装器会将专用安装目录和主程序设置为中完整性，避免主程序继续继承 Downloads 中的低完整性标签。主程序使用 `asInvoker` 清单。安装结束后请从开始菜单启动，安装器不会直接以管理员权限启动主程序。系统另有沙箱或安全策略限制时，安装版不能保证解除限制。
 
-更新前请通过托盘“退出”结束整个程序，再替换 exe。
+升级前请通过托盘“退出”结束程序，再运行新安装包。安装器会检查当前会话中的运行实例。旧便携版用户也应先退出旧程序，安装版会继续读取当前用户原有配置。
+
+在“通用”页勾选“开机自启”，当前用户登录 Windows 后会自动驻留托盘，不打开设置窗口；取消勾选会移除自启项。从便携版迁移时，请在安装版中取消并重新勾选，以更新启动路径。如果在 Windows 的“启动应用”中禁用了本程序，还需要在那里重新启用。
+
+可通过 Windows“已安装的应用”卸载。卸载删除安装文件、快捷方式，以及卸载账户中指向本次安装的自启项；保留鼠标映射配置。其他 Windows 账户的自启项需由对应账户关闭。
 
 ## 内存与运行方式
 
@@ -152,7 +156,7 @@ cargo xwin clippy --locked --target x86_64-pc-windows-msvc --all-targets -- -D w
 
 欢迎提交 Issue 和 Pull Request。报告问题时请提供 Windows 版本、程序版本、是否以管理员身份运行、复现步骤，以及相关映射规则。粘贴诊断信息前可隐去用户名和本地路径。
 
-修改后请通过格式与 Clippy 检查，并在 Windows 上验证相关行为，尤其是：关闭后映射仍然生效、双击托盘恢复、快速重复打开只有一个设置窗口、退出后没有残留进程，以及修改后的规则能够重新加载。当前未随仓库保留自动化回归测试，CI 主要覆盖静态检查与构建。
+修改后请通过格式与 Clippy 检查，并在 Windows 上验证相关行为，尤其是：关闭后映射仍然生效、双击托盘恢复、快速重复打开只有一个设置窗口、退出后没有残留进程，以及修改后的规则能够重新加载。当前未随仓库保留输入行为的自动化回归测试；CI 覆盖静态检查、构建，以及安装器的安装、升级、完整性标签和卸载验证。
 
 ## 许可证与致谢
 
@@ -161,3 +165,15 @@ cargo xwin clippy --locked --target x86_64-pc-windows-msvc --all-targets -- -D w
 感谢 Noah Nuebling 的 [Mac Mouse Fix](https://github.com/noah-nuebling/mac-mouse-fix) 提供功能设计参考。原项目采用自定义 [MMF License](https://github.com/noah-nuebling/mac-mouse-fix/blob/master/License)，并非 MIT；本仓库的 MIT 授权不替代原项目的许可条件。本仓库不包含下载的 Mac 项目源码目录，也不包含其商业授权、试用或付款模块。
 
 系统中文字体由操作系统提供，没有随本仓库重新分发。egui 自带的默认字体则随依赖嵌入程序，其许可证收录在第三方许可汇总中。
+
+## 构建安装包
+
+GitHub Actions 在 Windows 上完成编译后，使用 [Inno Setup 6](https://jrsoftware.org/isinfo.php) 生成安装器，并验证静默安装、覆盖安装、中完整性标签及卸载清理。成功后上传 `windows-mouse-fix-installer-x64`，包含可用于 Release 的 `*-setup.exe`。安装包目前尚未签名。
+
+本地 Windows 构建时，先将 release EXE、README、许可文件和 `assets/mouse.png` 按工作流中的步骤整理到 `dist/package`，然后运行：
+
+```powershell
+& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=0.2.1 installer/windows-mouse-fix.iss
+```
+
+安装包输出到 `dist/installer`。主程序的 Rust 版本号与 `/DAppVersion` 必须一致；CI 自动读取 Cargo 版本。

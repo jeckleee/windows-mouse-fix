@@ -1,5 +1,87 @@
 use super::*;
 use std::cell::Cell;
+use windows_sys::Win32::{Security::*, System::Threading::*};
+
+// Read only after registration fails; never change another process's permissions.
+unsafe fn token_value(token: HANDLE, class: TOKEN_INFORMATION_CLASS) -> String {
+    let mut value = 0u32;
+    let mut length = 0;
+    if GetTokenInformation(
+        token,
+        class,
+        (&mut value as *mut u32).cast(),
+        4,
+        &mut length,
+    ) == 0
+    {
+        return format!("读取失败：{}", std::io::Error::last_os_error());
+    }
+    value.to_string()
+}
+
+unsafe fn integrity_level(token: HANDLE) -> String {
+    let mut length = 0;
+    GetTokenInformation(token, TokenIntegrityLevel, null_mut(), 0, &mut length);
+    if length == 0 {
+        return format!("读取失败：{}", std::io::Error::last_os_error());
+    }
+    // Word-aligned storage for TOKEN_MANDATORY_LABEL and the SID it points into.
+    let mut buffer = vec![0usize; (length as usize).div_ceil(size_of::<usize>())];
+    if GetTokenInformation(
+        token,
+        TokenIntegrityLevel,
+        buffer.as_mut_ptr().cast(),
+        length,
+        &mut length,
+    ) == 0
+    {
+        return format!("读取失败：{}", std::io::Error::last_os_error());
+    }
+    let label = &*buffer.as_ptr().cast::<TOKEN_MANDATORY_LABEL>();
+    if IsValidSid(label.Label.Sid) == 0 {
+        return "无效完整性 SID".into();
+    }
+    let count = *GetSidSubAuthorityCount(label.Label.Sid);
+    if count == 0 {
+        return "完整性 SID 缺少级别".into();
+    }
+    let rid = *GetSidSubAuthority(label.Label.Sid, u32::from(count - 1));
+    let name = match rid {
+        0x0000..=0x0fff => "不可信",
+        0x1000..=0x1fff => "低",
+        0x2000..=0x2fff => "中",
+        0x3000..=0x3fff => "高",
+        _ => "系统或更高",
+    };
+    format!("{name}（0x{rid:04X}）")
+}
+
+unsafe fn process_security(pid: u32) -> String {
+    let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+    if process.is_null() {
+        return format!("PID {pid}，读取失败：{}", std::io::Error::last_os_error());
+    }
+    let mut token = null_mut();
+    let result = if OpenProcessToken(process, TOKEN_QUERY, &mut token) == 0 {
+        format!(
+            "PID {pid}，令牌读取失败：{}",
+            std::io::Error::last_os_error()
+        )
+    } else {
+        let result = format!(
+            "PID {pid}，完整性：{}\n会话：{}，已提升：{}，UIAccess：{}，AppContainer：{}",
+            integrity_level(token),
+            token_value(token, TokenSessionId),
+            token_value(token, TokenElevation),
+            token_value(token, TokenUIAccess),
+            token_value(token, TokenIsAppContainer),
+        );
+        CloseHandle(token);
+        result
+    };
+    CloseHandle(process);
+    result
+}
 
 pub enum TrayCommand {
     Configure { show: bool, enabled: bool },
@@ -147,22 +229,31 @@ impl Tray {
         }
         self.present = false;
         let taskbar = FindWindowW(wide("Shell_TrayWnd").as_ptr(), null());
+        let mut shell_pid = 0;
+        GetWindowThreadProcessId(taskbar, &mut shell_pid);
+        let shell_security = if shell_pid == 0 {
+            "未找到任务栏所属进程".into()
+        } else {
+            process_security(shell_pid)
+        };
         let executable = std::env::current_exe()
             .map(|path| path.display().to_string())
             .unwrap_or_else(|error| format!("无法读取：{error}"));
         let guidance = if access_denied {
-            "Windows 返回了访问被拒绝。请先退出程序，再右键 exe 选择“以管理员身份运行”。"
+            "附加错误为访问被拒绝，尚不能确定原因。请复制下方权限诊断信息；管理员运行仅是临时绕过办法。"
         } else {
             "请复制以下诊断信息，以便进一步排查。"
         };
         Err(format!(
-            "Windows Shell 未能注册托盘图标，设置窗口将保持打开。\n{guidance}\n\n版本：{}\n{}\n托盘消息窗口有效：{}\n系统任务栏窗口存在：{}\n结构体大小：{}\n程序路径：{}\n\n附加错误为 0 不代表调用成功；请复制这些诊断信息。",
+            "Windows Shell 未能注册托盘图标，设置窗口将保持打开。\n{guidance}\n\n版本：{}\n{}\n托盘消息窗口有效：{}\n系统任务栏窗口存在：{}\n结构体大小：{}\n程序路径：{}\n\n本程序：{}\n任务栏进程：{}\n\n附加错误仅供参考；权限字段 0 表示否、1 表示是，读取失败不代表否。",
             env!("CARGO_PKG_VERSION"),
             failures.join("\n"),
             IsWindow(self.data.hWnd) != 0,
             !taskbar.is_null(),
             self.data.cbSize,
-            executable
+            executable,
+            process_security(GetCurrentProcessId()),
+            shell_security,
         ))
     }
 }

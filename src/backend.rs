@@ -9,8 +9,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub fn run() {
-    let (config, error) = match Config::load() {
+pub fn run(startup: bool) {
+    let (mut config, error) = match Config::load() {
         Ok(config) => (config, None),
         Err(error) => (
             Config {
@@ -22,13 +22,16 @@ pub fn run() {
             ))),
         ),
     };
+    if startup {
+        config.show_tray = true;
+    }
     let (commands, receiver) = mpsc::channel();
     let (sender, events) = mpsc::channel();
     let initial = config.clone();
     let worker =
         std::thread::spawn(move || crate::platform::run_backend(initial, receiver, sender));
     match std::env::current_exe() {
-        Ok(executable) => run_session(&executable, config, error, &commands, events),
+        Ok(executable) => run_session(&executable, config, error, &commands, events, startup),
         Err(error) => show_error(&format!("无法定位设置程序：{error}")),
     }
     let _ = commands.send(Command::Shutdown);
@@ -79,11 +82,12 @@ fn run_session(
     mut last_error: Option<Event>,
     commands: &mpsc::Sender<Command>,
     events: mpsc::Receiver<Event>,
+    startup: bool,
 ) {
     let (requests, incoming) = mpsc::channel::<(u32, Command)>();
     let mut editor: Option<EditorProcess> = None;
     let mut ready = false;
-    let mut want_open = true;
+    let mut want_open = !startup || last_error.is_some();
     let mut hide_pid = None;
     let mut running = true;
     while running {
@@ -191,6 +195,9 @@ fn run_session(
                 Event::Error(_) => {
                     last_error = Some(event.clone());
                     notify(&editor, event);
+                    if editor.is_none() {
+                        want_open = true;
+                    }
                 }
                 _ => notify(&editor, event),
             },

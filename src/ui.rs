@@ -28,6 +28,10 @@ pub struct App {
     update_rx: Option<mpsc::Receiver<UpdateResult>>,
     update_status: String,
     release: Option<(String, String)>,
+    #[cfg(windows)]
+    startup_enabled: bool,
+    #[cfg(windows)]
+    startup_error: Option<String>,
 }
 
 impl App {
@@ -67,6 +71,8 @@ impl App {
             ),
         };
         let service = Service::start(config.clone(), cc);
+        #[cfg(windows)]
+        let startup = crate::startup::enabled();
         let mut app = Self {
             config,
             service,
@@ -84,6 +90,10 @@ impl App {
             update_rx: None,
             update_status: String::new(),
             release: None,
+            #[cfg(windows)]
+            startup_enabled: startup.as_ref().copied().unwrap_or(false),
+            #[cfg(windows)]
+            startup_error: startup.err(),
         };
         if app.config.check_updates && !app.config.update_repository.is_empty() {
             app.check_updates();
@@ -155,6 +165,24 @@ impl App {
             .changed();
         ui.weak("双击托盘图标打开窗口；右键可打开窗口、启用 / 暂停或退出。关闭窗口时会自动显示托盘图标。");
         ui.separator();
+        #[cfg(windows)]
+        {
+            let previous = self.startup_enabled;
+            if ui.checkbox(&mut self.startup_enabled, "开机自启").changed() {
+                match crate::startup::set_enabled(self.startup_enabled) {
+                    Ok(()) => self.startup_error = None,
+                    Err(error) => {
+                        self.startup_enabled = previous;
+                        self.startup_error = Some(error);
+                    }
+                }
+            }
+            ui.weak("登录 Windows 后自动驻留托盘，不打开设置窗口。移动程序后，请重新勾选此项。");
+            if let Some(error) = &self.startup_error {
+                ui.colored_label(Color32::LIGHT_RED, format!("自启设置失败：{error}"));
+            }
+            ui.separator();
+        }
         ui.label("更新来源（此 Windows 项目的 GitHub 仓库）");
         let edit = ui.add(
             egui::TextEdit::singleline(&mut self.config.update_repository)
@@ -541,7 +569,9 @@ impl eframe::App for App {
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
                 .show(ctx, |ui| {
-                    ui.label(&error);
+                    egui::ScrollArea::vertical()
+                        .max_height(300.0)
+                        .show(ui, |ui| ui.label(&error));
                     if ui.button("复制诊断信息").clicked() {
                         ui.ctx().copy_text(error.clone());
                     }
