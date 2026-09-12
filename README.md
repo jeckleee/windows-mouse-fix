@@ -173,10 +173,10 @@ GitHub Actions 在 Windows 上完成编译后，使用 [Inno Setup 6](https://jr
 本地 Windows 构建时，先将 release EXE、README、许可文件和 `assets/mouse.png` 按工作流中的步骤整理到 `dist/package`，然后运行以下两步（不能跳过外层安装器提权处理）：
 
 ```powershell
-& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=0.2.1 installer/windows-mouse-fix.iss
-python installer/set-installer-elevation.py dist/installer/windows-mouse-fix-0.2.1-windows-x64-setup-r2.exe dist/package/windows-mouse-fix.exe
+& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=0.2.3 installer/windows-mouse-fix.iss
+python installer/set-installer-elevation.py dist/installer/windows-mouse-fix-0.2.3-windows-x64-setup.exe dist/package/windows-mouse-fix.exe
 ```
 
 安装包输出到 `dist/installer`。主程序的 Rust 版本号与 `/DAppVersion` 必须一致；CI 自动读取 Cargo 版本。
 
-安装包 r2 在 Inno Setup 编译完成后，将外层启动器清单修改为 `requireAdministrator`，让 Windows 在解包前请求 UAC 权限；主程序保持 `asInvoker`。仅原位修改清单资源，不移动安装包压缩数据；该处理必须在代码签名之前执行。CI 检查双方清单，并对修改后的最终安装包执行安装、覆盖安装和卸载验证。UAC 弹窗及低完整性下载目录中的双击启动仍需在 Windows 桌面验证。
+安装包在 Inno Setup 编译完成后，将外层启动器清单修改为 `requireAdministrator`，让 Windows 在解包前请求 UAC 权限；主程序保持 `asInvoker`。仅原位修改清单资源，不移动安装包压缩数据；该处理必须在代码签名之前执行。CI 检查双方清单，并对修改后的最终安装包执行安装、覆盖安装和卸载验证。UAC 弹窗及低完整性下载目录中的双击启动仍需在 Windows 桌面验证。

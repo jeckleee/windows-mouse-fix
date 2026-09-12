@@ -1,6 +1,6 @@
 [package]
 name = "windows-mouse-fix"
-version = "0.2.1"
+version = "0.2.3"
 edition = "2024"
 description = "A lightweight Windows mouse button remapper with an on-demand settings UI"
 license = "MIT"
