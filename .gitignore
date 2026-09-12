@@ -1,0 +1,9 @@
+/target/
+/dist/
+.DS_Store
+Thumbs.db
+Desktop.ini
+.env
+.env.*
+*.log
+*.tmp

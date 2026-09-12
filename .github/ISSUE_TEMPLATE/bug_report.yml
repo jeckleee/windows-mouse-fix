@@ -1,0 +1,23 @@
+name: 问题反馈
+description: 报告按钮映射、托盘或设置界面的问题
+title: "[Bug] "
+body:
+  - type: textarea
+    id: environment
+    attributes:
+      label: 运行环境
+      description: Windows 版本、程序版本、鼠标型号，以及是否以管理员身份运行。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤与实际表现
+      description: 请说明相关按钮规则、操作步骤、预期行为和实际行为。
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 诊断信息或截图
+      description: 如有错误提示，请附上内容。可隐去用户名和本地路径；不要提交私人凭据。
