@@ -170,10 +170,13 @@ cargo xwin clippy --locked --target x86_64-pc-windows-msvc --all-targets -- -D w
 
 GitHub Actions 在 Windows 上完成编译后，使用 [Inno Setup 6](https://jrsoftware.org/isinfo.php) 生成安装器，并验证静默安装、覆盖安装、中完整性标签及卸载清理。成功后上传 `windows-mouse-fix-installer-x64`，包含可用于 Release 的 `*-setup.exe`。安装包目前尚未签名。
 
-本地 Windows 构建时，先将 release EXE、README、许可文件和 `assets/mouse.png` 按工作流中的步骤整理到 `dist/package`，然后运行：
+本地 Windows 构建时，先将 release EXE、README、许可文件和 `assets/mouse.png` 按工作流中的步骤整理到 `dist/package`，然后运行以下两步（不能跳过外层安装器提权处理）：
 
 ```powershell
 & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=0.2.1 installer/windows-mouse-fix.iss
+./installer/Set-InstallerElevation.ps1 -Installer dist/installer/windows-mouse-fix-0.2.1-windows-x64-setup-r2.exe -Application dist/package/windows-mouse-fix.exe
 ```
 
 安装包输出到 `dist/installer`。主程序的 Rust 版本号与 `/DAppVersion` 必须一致；CI 自动读取 Cargo 版本。
+
+安装包 r2 在 Inno Setup 编译完成后，将外层启动器清单修改为 `requireAdministrator`，让 Windows 在解包前请求 UAC 权限；主程序保持 `asInvoker`。该处理必须在代码签名之前执行。CI 检查双方清单，并对修改后的最终安装包执行安装、覆盖安装和卸载验证。UAC 弹窗及低完整性下载目录中的双击启动仍需在 Windows 桌面验证。

@@ -41,6 +41,11 @@ jobs:
           if (!(Test-Path $compiler)) { throw "Inno Setup 6 was not found" }
           & $compiler "/DAppVersion=$version" installer/windows-mouse-fix.iss
           if ($LASTEXITCODE -ne 0) { throw "Installer compilation failed" }
+      - name: Require elevation before installer extraction
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem dist/installer/*-setup.exe).FullName
+          ./installer/Set-InstallerElevation.ps1 -Installer $setup -Application dist/package/windows-mouse-fix.exe
       - name: Check install, upgrade and uninstall
         shell: pwsh
         run: |
