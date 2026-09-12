@@ -44,12 +44,12 @@ jobs:
       - name: Require elevation before installer extraction
         shell: pwsh
         run: |
-          $setup = (Get-ChildItem dist/installer/*-setup.exe).FullName
+          $setup = (Get-ChildItem dist/installer/*-setup*.exe).FullName
           ./installer/Set-InstallerElevation.ps1 -Installer $setup -Application dist/package/windows-mouse-fix.exe
       - name: Check install, upgrade and uninstall
         shell: pwsh
         run: |
-          $setup = (Get-ChildItem dist/installer/*-setup.exe).FullName
+          $setup = (Get-ChildItem dist/installer/*-setup*.exe).FullName
           $installDir = Join-Path $env:RUNNER_TEMP "wmf-install-check"
           $arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$installDir`"")
           foreach ($attempt in 1..2) {
@@ -81,6 +81,6 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: windows-mouse-fix-installer-x64
-          path: dist/installer/*-setup.exe
+          path: dist/installer/*-setup*.exe
           if-no-files-found: error
           retention-days: 14
