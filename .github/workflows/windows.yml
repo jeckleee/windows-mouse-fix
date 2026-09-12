@@ -45,8 +45,10 @@ jobs:
         shell: pwsh
         run: |
           $setup = (Get-ChildItem dist/installer/*-setup*.exe).FullName
-          ./installer/Set-InstallerElevation.ps1 -Installer $setup -Application dist/package/windows-mouse-fix.exe
+          python installer/set-installer-elevation.py $setup dist/package/windows-mouse-fix.exe
+          if ($LASTEXITCODE -ne 0) { throw "Installer elevation verification failed" }
       - name: Check install, upgrade and uninstall
+        timeout-minutes: 3
         shell: pwsh
         run: |
           $setup = (Get-ChildItem dist/installer/*-setup*.exe).FullName
