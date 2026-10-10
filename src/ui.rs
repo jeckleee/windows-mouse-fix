@@ -431,101 +431,163 @@ impl App {
         };
         let mut cancel = false;
         let mut commit = false;
-        egui::Window::new(if index.is_some() {
+        let title = if index.is_some() {
             "编辑映射"
         } else {
             "添加映射"
-        })
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(ctx, |ui| {
-            ui.add_enabled_ui(!self.recording, |ui| {
+        };
+        egui::Window::new(title)
+            .id(egui::Id::new("mapping_editor"))
+            .title_bar(false)
+            .resizable(false)
+            .default_width(460.0)
+            .max_width(460.0)
+            .frame(
+                egui::Frame::window(&ctx.style())
+                    .inner_margin(24)
+                    .corner_radius(12),
+            )
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    egui::ComboBox::from_id_salt("button")
-                        .selected_text(button_label(rule.trigger.button))
-                        .show_ui(ui, |ui| {
-                            for button in 3..=5 {
-                                ui.selectable_value(
-                                    &mut rule.trigger.button,
-                                    button,
-                                    button_label(button),
-                                );
-                            }
-                        });
-                    egui::ComboBox::from_id_salt("gesture")
-                        .selected_text(rule.trigger.gesture.label())
-                        .show_ui(ui, |ui| {
-                            for gesture in Gesture::ALL {
-                                ui.selectable_value(
-                                    &mut rule.trigger.gesture,
-                                    gesture,
-                                    gesture.label(),
-                                );
-                            }
-                        });
-                });
-                ui.label("触发时需要按住的修饰键");
-                modifier_controls(ui, &mut rule.trigger.modifiers);
-                ui.separator();
-                ui.label("执行动作");
-                egui::ComboBox::from_id_salt("action")
-                    .width(270.0)
-                    .selected_text(rule.action.label())
-                    .show_ui(ui, |ui| {
-                        for action in Action::builtins() {
-                            let label = action.label();
-                            ui.selectable_value(&mut rule.action, action, label);
-                        }
-                        ui.selectable_value(
-                            &mut rule.action,
-                            Action::Shortcut(Shortcut {
-                                modifiers: Modifiers::default(),
-                                key: 0,
-                            }),
-                            "自定义快捷键…",
-                        );
+                    ui.label(RichText::new(title).size(24.0).strong());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        cancel |= ui.button("×").on_hover_text("取消并关闭").clicked();
                     });
-            });
-            if let Action::Shortcut(shortcut) = &mut rule.action {
-                ui.label(if shortcut.key == 0 {
-                    "尚未录制快捷键".into()
-                } else {
-                    shortcut.label()
                 });
-                if self.recording {
-                    ui.colored_label(
-                        Color32::LIGHT_BLUE,
-                        "请按快捷键（一个主键 + 修饰键），Esc 取消录制",
-                    );
-                    if ui.button("取消录制").clicked() {
-                        self.recording = false;
-                        self.service.send(Command::Record(false));
-                    }
-                } else if ui
-                    .add_enabled(self.ready, egui::Button::new("录制快捷键"))
-                    .clicked()
-                {
-                    self.recording = true;
-                    self.service.send(Command::Record(true));
-                }
-            }
-            if rule.trigger.gesture.is_drag() {
-                ui.weak("超过 24 像素后触发一次；松开按钮结束本次操作。");
-            }
-            if rule.trigger.gesture == Gesture::Hold {
-                ui.weak("按住 400 毫秒触发；已识别的拖动优先。");
-            }
-            if !self.draft_error.is_empty() {
-                ui.colored_label(Color32::LIGHT_RED, &self.draft_error);
-            }
-            ui.horizontal(|ui| {
-                commit = ui
-                    .add_enabled(!self.recording, egui::Button::new("保存"))
-                    .clicked();
-                cancel = ui.button("取消").clicked();
+                ui.weak("选择触发操作，并设置执行动作");
+                egui::ScrollArea::vertical()
+                    .id_salt("mapping_editor_content")
+                    .max_height((ctx.content_rect().height() - 220.0).max(140.0))
+                    .show(ui, |ui| {
+                        card(ui).show(ui, |ui| {
+                            ui.set_min_width(ui.available_width());
+                            ui.strong("触发操作");
+                            ui.add_enabled_ui(!self.recording, |ui| {
+                                ui.columns(2, |columns| {
+                                    columns[0].label("鼠标按钮");
+                                    egui::ComboBox::from_id_salt("button")
+                                        .width(columns[0].available_width())
+                                        .selected_text(button_label(rule.trigger.button))
+                                        .show_ui(&mut columns[0], |ui| {
+                                            for button in 3..=5 {
+                                                ui.selectable_value(
+                                                    &mut rule.trigger.button,
+                                                    button,
+                                                    button_label(button),
+                                                );
+                                            }
+                                        });
+                                    columns[1].label("操作方式");
+                                    egui::ComboBox::from_id_salt("gesture")
+                                        .width(columns[1].available_width())
+                                        .selected_text(rule.trigger.gesture.label())
+                                        .show_ui(&mut columns[1], |ui| {
+                                            for gesture in Gesture::ALL {
+                                                ui.selectable_value(
+                                                    &mut rule.trigger.gesture,
+                                                    gesture,
+                                                    gesture.label(),
+                                                );
+                                            }
+                                        });
+                                });
+                                ui.label("修饰键（可选）");
+                                modifier_controls(ui, &mut rule.trigger.modifiers);
+                                ui.label(
+                                    RichText::new("不选择修饰键时，仅使用鼠标按钮触发")
+                                        .small()
+                                        .color(ui.visuals().weak_text_color()),
+                                );
+                            });
+                            if rule.trigger.gesture.is_drag() {
+                                ui.weak("超过 24 像素后触发一次；松开按钮结束本次操作。");
+                            }
+                            if rule.trigger.gesture == Gesture::Hold {
+                                ui.weak("按住 400 毫秒触发；已识别的拖动优先。");
+                            }
+                        });
+                        card(ui).show(ui, |ui| {
+                            ui.set_min_width(ui.available_width());
+                            ui.strong("执行动作");
+                            ui.add_enabled_ui(!self.recording, |ui| {
+                                egui::ComboBox::from_id_salt("action")
+                                    .width(ui.available_width())
+                                    .selected_text(rule.action.label())
+                                    .show_ui(ui, |ui| {
+                                        for action in Action::builtins() {
+                                            let label = action.label();
+                                            ui.selectable_value(&mut rule.action, action, label);
+                                        }
+                                        ui.selectable_value(
+                                            &mut rule.action,
+                                            Action::Shortcut(Shortcut {
+                                                modifiers: Modifiers::default(),
+                                                key: 0,
+                                            }),
+                                            "自定义快捷键…",
+                                        );
+                                    });
+                            });
+                            ui.label(
+                                RichText::new("可选择系统动作，或录制自定义快捷键")
+                                    .small()
+                                    .color(ui.visuals().weak_text_color()),
+                            );
+                            if let Action::Shortcut(shortcut) = &mut rule.action {
+                                ui.separator();
+                                ui.label(if shortcut.key == 0 {
+                                    "尚未录制快捷键".into()
+                                } else {
+                                    shortcut.label()
+                                });
+                                if self.recording {
+                                    ui.colored_label(
+                                        accent(ui),
+                                        "请按快捷键（一个主键 + 修饰键），Esc 取消录制",
+                                    );
+                                    if ui.button("取消录制").clicked() {
+                                        self.recording = false;
+                                        self.service.send(Command::Record(false));
+                                    }
+                                } else if ui
+                                    .add_enabled(self.ready, egui::Button::new("录制快捷键"))
+                                    .clicked()
+                                {
+                                    self.recording = true;
+                                    self.service.send(Command::Record(true));
+                                }
+                            }
+                        });
+                        card(ui).inner_margin(12).show(ui, |ui| {
+                            ui.set_min_width(ui.available_width());
+                            ui.label(
+                                RichText::new(format!(
+                                    "{} · {}{}  →  {}",
+                                    button_label(rule.trigger.button),
+                                    rule.trigger.modifiers.label(),
+                                    rule.trigger.gesture.label(),
+                                    rule.action.label()
+                                ))
+                                .color(ui.visuals().weak_text_color()),
+                            );
+                        });
+                        if !self.draft_error.is_empty() {
+                            ui.colored_label(Color32::LIGHT_RED, &self.draft_error);
+                        }
+                    });
+                ui.separator();
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    commit = ui
+                        .add_enabled(
+                            !self.recording,
+                            egui::Button::new(RichText::new("保存映射").color(Color32::WHITE))
+                                .fill(accent(ui)),
+                        )
+                        .clicked();
+                    cancel |= ui.button("取消").clicked();
+                });
             });
-        });
         self.draft = Some((index, rule.clone()));
         if commit {
             let mut config = self.config.clone();
@@ -681,11 +743,22 @@ fn setting(ui: &mut egui::Ui, value: &mut bool, title: &str, subtitle: &str) -> 
 }
 
 fn modifier_controls(ui: &mut egui::Ui, modifiers: &mut Modifiers) {
-    ui.horizontal(|ui| {
-        ui.checkbox(&mut modifiers.ctrl, "Ctrl");
-        ui.checkbox(&mut modifiers.shift, "Shift");
-        ui.checkbox(&mut modifiers.alt, "Alt");
-        ui.checkbox(&mut modifiers.win, "Win");
+    ui.columns(4, |columns| {
+        for (column, (value, label)) in columns.iter_mut().zip([
+            (&mut modifiers.ctrl, "Ctrl"),
+            (&mut modifiers.shift, "Shift"),
+            (&mut modifiers.alt, "Alt"),
+            (&mut modifiers.win, "Win"),
+        ]) {
+            egui::Frame::new()
+                .fill(column.visuals().panel_fill)
+                .stroke(column.visuals().widgets.inactive.bg_stroke)
+                .corner_radius(6)
+                .inner_margin(6)
+                .show(column, |ui| {
+                    ui.checkbox(value, label);
+                });
+        }
     });
 }
 
