@@ -30,7 +30,7 @@ fn main() -> eframe::Result {
                 eframe::icon_data::from_png_bytes(include_bytes!("../assets/mouse.png"))
                     .expect("embedded application icon must be valid"),
             )
-            .with_inner_size([780.0, 680.0])
+            .with_inner_size([820.0, 820.0])
             .with_min_inner_size([640.0, 480.0]),
         ..Default::default()
     };

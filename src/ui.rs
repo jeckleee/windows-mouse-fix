@@ -37,7 +37,7 @@ pub struct App {
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let ctx = &cc.egui_ctx;
-        ctx.set_visuals(egui::Visuals::dark());
+        configure_style(ctx);
         let mut fonts = egui::FontDefinitions::default();
         if let Some(data) = crate::fonts::chinese_font() {
             fonts
@@ -50,16 +50,6 @@ impl App {
                 .push("Chinese".into());
             ctx.set_fonts(fonts);
         }
-        let mut style = (*ctx.style()).clone();
-        style
-            .text_styles
-            .insert(egui::TextStyle::Body, egui::FontId::proportional(16.0));
-        style
-            .text_styles
-            .insert(egui::TextStyle::Button, egui::FontId::proportional(16.0));
-        style.spacing.item_spacing = egui::vec2(10.0, 12.0);
-        style.spacing.button_padding = egui::vec2(12.0, 7.0);
-        ctx.set_style(style);
         let (config, status) = match Config::load() {
             Ok(config) => (config, "正在启动输入引擎…".into()),
             Err(error) => (
@@ -153,164 +143,276 @@ impl App {
     }
 
     fn general(&mut self, ui: &mut egui::Ui) {
-        ui.heading("通用");
-        ui.add_space(8.0);
-        let mut changed = ui
-            .checkbox(&mut self.config.enabled, "启用按钮映射")
-            .changed();
-        ui.weak("关闭设置窗口后继续在后台运行；使用下方或托盘中的“退出程序”结束运行。");
-        ui.separator();
-        changed |= ui
-            .checkbox(&mut self.config.show_tray, "在系统托盘中显示")
-            .changed();
-        ui.weak("双击托盘图标打开窗口；右键可打开窗口、启用 / 暂停或退出。关闭窗口时会自动显示托盘图标。");
-        ui.separator();
-        #[cfg(windows)]
-        {
-            let previous = self.startup_enabled;
-            if ui.checkbox(&mut self.startup_enabled, "开机自启").changed() {
-                match crate::startup::set_enabled(self.startup_enabled) {
-                    Ok(()) => self.startup_error = None,
-                    Err(error) => {
-                        self.startup_enabled = previous;
-                        self.startup_error = Some(error);
+        page_heading(ui, "通用设置", "管理运行方式与版本更新");
+        ui.strong("运行设置");
+        let mut changed = false;
+        card(ui).show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            changed |= setting(
+                ui,
+                &mut self.config.enabled,
+                "启用按钮映射",
+                "关闭窗口后，映射继续在后台运行",
+            );
+            ui.separator();
+            changed |= setting(
+                ui,
+                &mut self.config.show_tray,
+                "在系统托盘中显示",
+                "双击托盘图标打开设置；右键可暂停或退出",
+            );
+            #[cfg(windows)]
+            {
+                ui.separator();
+                let previous = self.startup_enabled;
+                if setting(
+                    ui,
+                    &mut self.startup_enabled,
+                    "开机自启",
+                    "登录 Windows 后自动驻留托盘；移动程序后请重新勾选",
+                ) {
+                    match crate::startup::set_enabled(self.startup_enabled) {
+                        Ok(()) => self.startup_error = None,
+                        Err(error) => {
+                            self.startup_enabled = previous;
+                            self.startup_error = Some(error);
+                        }
                     }
                 }
+                if let Some(error) = &self.startup_error {
+                    ui.colored_label(Color32::LIGHT_RED, format!("自启设置失败：{error}"));
+                }
             }
-            ui.weak("登录 Windows 后自动驻留托盘，不打开设置窗口。移动程序后，请重新勾选此项。");
-            if let Some(error) = &self.startup_error {
-                ui.colored_label(Color32::LIGHT_RED, format!("自启设置失败：{error}"));
-            }
+        });
+        ui.add_space(6.0);
+        ui.strong("版本更新");
+        card(ui).show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.label("更新来源");
+            changed |= ui
+                .add(
+                    egui::TextEdit::singleline(&mut self.config.update_repository)
+                        .desired_width(ui.available_width())
+                        .hint_text("GitHub 仓库：所有者/仓库名"),
+                )
+                .changed();
+            ui.weak("此 Windows 项目的 GitHub 仓库，未配置时不检查更新。");
             ui.separator();
-        }
-        ui.label("更新来源（此 Windows 项目的 GitHub 仓库）");
-        let edit = ui.add(
-            egui::TextEdit::singleline(&mut self.config.update_repository)
-                .hint_text("所有者/仓库名，发布前可留空"),
-        );
-        changed |= edit.changed();
-        let configured = !self.config.update_repository.trim().is_empty();
-        changed |= ui
-            .add_enabled(
-                configured,
-                egui::Checkbox::new(&mut self.config.check_updates, "打开设置时检查更新"),
-            )
-            .changed();
-        changed |= ui
-            .add_enabled(
-                configured && self.config.check_updates,
-                egui::Checkbox::new(&mut self.config.beta_updates, "包含 Beta 版本"),
-            )
-            .changed();
-        if !configured {
-            ui.weak("尚未配置发布源，不会请求原 Mac 项目的更新。");
-        }
-        if ui
-            .add_enabled(
-                configured && self.update_rx.is_none(),
-                egui::Button::new("立即检查"),
-            )
-            .clicked()
-        {
-            self.check_updates();
-        }
-        if !self.update_status.is_empty() {
-            ui.label(&self.update_status);
-        }
-        if let Some((version, url)) = &self.release {
-            ui.hyperlink_to(format!("下载 {version}"), url);
-        }
-        ui.separator();
-        ui.weak(format!("版本 {} · 配置保存在：", env!("CARGO_PKG_VERSION")));
-        ui.label(Config::path().display().to_string());
-        ui.add_space(8.0);
-        if ui.button("退出程序").clicked() {
-            self.quit(ui.ctx());
-        }
+            let configured = !self.config.update_repository.trim().is_empty();
+            ui.add_enabled_ui(configured, |ui| {
+                changed |= setting(
+                    ui,
+                    &mut self.config.check_updates,
+                    "打开设置时检查更新",
+                    "仅检查版本，不会自动下载或安装",
+                );
+            });
+            ui.add_enabled_ui(configured && self.config.check_updates, |ui| {
+                changed |= setting(
+                    ui,
+                    &mut self.config.beta_updates,
+                    "包含 Beta 版本",
+                    "同时检查预发布版本",
+                );
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add_enabled(
+                        configured && self.update_rx.is_none(),
+                        egui::Button::new("立即检查"),
+                    )
+                    .clicked()
+                {
+                    self.check_updates();
+                }
+            });
+            if !self.update_status.is_empty() {
+                ui.label(&self.update_status);
+            }
+            if let Some((version, url)) = &self.release {
+                ui.hyperlink_to(format!("下载 {version}"), url);
+            }
+        });
+        ui.add_space(6.0);
+        ui.strong("应用信息");
+        card(ui).show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label("当前版本");
+                ui.label(env!("CARGO_PKG_VERSION"));
+            });
+            ui.separator();
+            ui.label("配置位置");
+            ui.label(
+                RichText::new(Config::path().display().to_string())
+                    .small()
+                    .color(ui.visuals().weak_text_color()),
+            );
+        });
+        ui.horizontal_wrapped(|ui| {
+            ui.weak("关闭设置窗口后，程序继续在后台运行。");
+            if ui.button("退出程序").clicked() {
+                self.quit(ui.ctx());
+            }
+        });
         if changed {
             self.save();
         }
     }
 
     fn buttons(&mut self, ui: &mut egui::Ui) -> bool {
-        ui.heading("按钮");
+        page_heading(ui, "按钮映射", "为中键和侧键设置动作");
         let (rect, response) = ui.allocate_exact_size(
-            egui::vec2(ui.available_width(), 105.0),
+            egui::vec2(ui.available_width(), 158.0),
             egui::Sense::hover(),
         );
-        ui.painter().rect_filled(
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(
             rect,
-            8.0,
+            10.0,
             if response.hovered() {
-                Color32::from_gray(65)
+                ui.visuals().widgets.hovered.bg_fill
             } else {
-                Color32::from_gray(43)
+                ui.visuals().faint_bg_color
             },
         );
-        ui.painter().text(
-            rect.center(),
+        painter.rect_stroke(
+            rect.shrink(1.0),
+            10.0,
+            egui::Stroke::new(1.5_f32, accent(ui)),
+            egui::StrokeKind::Inside,
+        );
+        let center = rect.center();
+        painter.circle_stroke(
+            egui::pos2(center.x, rect.top() + 33.0),
+            16.0,
+            egui::Stroke::new(1.5_f32, accent(ui)),
+        );
+        painter.text(
+            egui::pos2(center.x, rect.top() + 32.0),
             egui::Align2::CENTER_CENTER,
             "+",
-            egui::FontId::proportional(52.0),
-            Color32::LIGHT_GRAY,
+            egui::FontId::proportional(28.0),
+            accent(ui),
         );
-        ui.label("将指针移入 + 区域，操作中键或侧键以录入。支持单击、双击、长按和四向拖动。");
-        ui.weak("可同时按住 Ctrl / Shift / Alt / Win。单击录入需等待系统双击时间结束。");
+        painter.text(
+            egui::pos2(center.x, rect.top() + 72.0),
+            egui::Align2::CENTER_CENTER,
+            "将指针移入此区域，操作鼠标按钮以录入",
+            egui::FontId::proportional(16.0),
+            ui.visuals().text_color(),
+        );
+        painter.text(
+            egui::pos2(center.x, rect.top() + 103.0),
+            egui::Align2::CENTER_CENTER,
+            "支持单击、双击、长按和四向拖动",
+            egui::FontId::proportional(14.0),
+            ui.visuals().weak_text_color(),
+        );
+        painter.text(
+            egui::pos2(center.x, rect.top() + 133.0),
+            egui::Align2::CENTER_CENTER,
+            "可配合 Ctrl / Shift / Alt / Win · 单击需等待双击判定",
+            egui::FontId::proportional(13.0),
+            ui.visuals().weak_text_color(),
+        );
         ui.horizontal(|ui| {
-            if ui.button("手动添加映射").clicked() {
+            if ui
+                .add(
+                    egui::Button::new(RichText::new("＋ 手动添加映射").color(Color32::WHITE))
+                        .fill(accent(ui)),
+                )
+                .clicked()
+            {
                 self.open_editor(None, Rule::default());
             }
             if ui.button("恢复默认值…").clicked() {
                 self.restore = true;
             }
         });
-        if ui
-            .checkbox(&mut self.config.lock_pointer, "执行拖动映射时锁定指针")
-            .changed()
-        {
-            self.save();
-        }
-        ui.separator();
         let mut edit = None;
         let mut remove = None;
-        egui::ScrollArea::both().id_salt("rules").show(ui, |ui| {
-            if self.config.rules.is_empty() {
-                ui.weak("尚未添加映射。默认保留所有鼠标按键的原始行为。");
+        if self.config.rules.is_empty() {
+            card(ui).show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                ui.strong("尚未添加映射");
+                ui.weak("在上方录入操作，或手动添加映射。未绑定的按键保留原始行为。");
+            });
+        }
+        for button in 3..=5 {
+            let count = self
+                .config
+                .rules
+                .iter()
+                .filter(|r| r.trigger.button == button)
+                .count();
+            if count == 0 {
+                continue;
             }
-            for button in 3..=5 {
-                if !self.config.rules.iter().any(|r| r.trigger.button == button) {
-                    continue;
-                }
-                ui.group(|ui| {
-                    ui.set_min_width(ui.available_width());
+            card(ui).show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                ui.horizontal(|ui| {
                     ui.strong(button_label(button));
-                    egui::Grid::new(("rules", button))
-                        .num_columns(4)
-                        .striped(true)
-                        .show(ui, |ui| {
-                            for (index, rule) in self
-                                .config
-                                .rules
-                                .iter()
-                                .enumerate()
-                                .filter(|(_, r)| r.trigger.button == button)
-                            {
-                                if ui.small_button("删除").clicked() {
-                                    remove = Some(index);
-                                }
-                                ui.label(format!(
-                                    "{}{}",
-                                    rule.trigger.modifiers.label(),
-                                    rule.trigger.gesture.label()
-                                ));
-                                ui.label(rule.action.label());
-                                if ui.small_button("编辑").clicked() {
-                                    edit = Some(index);
-                                }
-                                ui.end_row();
-                            }
-                        });
+                    ui.weak(format!("{count} 条映射"));
                 });
+                ui.separator();
+                egui::ScrollArea::horizontal()
+                    .id_salt(("rules", button))
+                    .show(ui, |ui| {
+                        let action_width = (ui.available_width() - 360.0).max(120.0);
+                        egui::Grid::new(("rules", button))
+                            .num_columns(5)
+                            .min_col_width(30.0)
+                            .spacing([18.0, 8.0])
+                            .show(ui, |ui| {
+                                ui.weak("触发操作");
+                                ui.label("");
+                                ui.weak("执行动作");
+                                ui.label("");
+                                ui.label("");
+                                ui.end_row();
+                                for (index, rule) in self
+                                    .config
+                                    .rules
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(_, r)| r.trigger.button == button)
+                                {
+                                    ui.label(format!(
+                                        "{}{}",
+                                        rule.trigger.modifiers.label(),
+                                        rule.trigger.gesture.label()
+                                    ));
+                                    ui.weak("→");
+                                    ui.add_sized(
+                                        [action_width, 24.0],
+                                        egui::Label::new(rule.action.label())
+                                            .halign(egui::Align::Min),
+                                    );
+                                    if ui
+                                        .small_button(RichText::new("编辑").color(accent(ui)))
+                                        .clicked()
+                                    {
+                                        edit = Some(index);
+                                    }
+                                    if ui.small_button("删除").clicked() {
+                                        remove = Some(index);
+                                    }
+                                    ui.end_row();
+                                }
+                            });
+                    });
+            });
+        }
+        card(ui).show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            if setting(
+                ui,
+                &mut self.config.lock_pointer,
+                "执行拖动映射时锁定指针",
+                "拖动操作期间保持指针位置",
+            ) {
+                self.save();
             }
         });
         if let Some(index) = edit {
@@ -447,6 +549,135 @@ impl App {
             self.service.send(Command::Record(false));
         }
     }
+}
+
+fn configure_style(ctx: &egui::Context) {
+    ctx.set_theme(egui::ThemePreference::System);
+    ctx.all_styles_mut(|style| {
+        let dark = style.visuals.dark_mode;
+        let blue = if dark {
+            Color32::from_rgb(91, 155, 255)
+        } else {
+            Color32::from_rgb(35, 108, 220)
+        };
+        style
+            .text_styles
+            .insert(egui::TextStyle::Heading, egui::FontId::proportional(26.0));
+        style
+            .text_styles
+            .insert(egui::TextStyle::Body, egui::FontId::proportional(16.0));
+        style
+            .text_styles
+            .insert(egui::TextStyle::Button, egui::FontId::proportional(15.0));
+        style.spacing.item_spacing = egui::vec2(10.0, 12.0);
+        style.spacing.button_padding = egui::vec2(14.0, 7.0);
+        style.visuals.panel_fill = if dark {
+            Color32::from_rgb(23, 27, 34)
+        } else {
+            Color32::from_rgb(245, 247, 250)
+        };
+        style.visuals.faint_bg_color = if dark {
+            Color32::from_rgb(32, 38, 48)
+        } else {
+            Color32::WHITE
+        };
+        style.visuals.window_fill = style.visuals.panel_fill;
+        style.visuals.text_edit_bg_color = Some(style.visuals.panel_fill);
+        style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(
+            1.0_f32,
+            if dark {
+                Color32::from_rgb(65, 77, 94)
+            } else {
+                Color32::from_rgb(190, 200, 214)
+            },
+        );
+        style.visuals.selection.bg_fill = blue;
+        style.visuals.selection.stroke = egui::Stroke::new(1.0_f32, Color32::WHITE);
+        style.visuals.hyperlink_color = blue;
+        style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(
+            1.0_f32,
+            if dark {
+                Color32::from_rgb(48, 55, 68)
+            } else {
+                Color32::from_rgb(220, 225, 232)
+            },
+        );
+        for widget in [
+            &mut style.visuals.widgets.inactive,
+            &mut style.visuals.widgets.hovered,
+            &mut style.visuals.widgets.active,
+        ] {
+            widget.corner_radius = egui::CornerRadius::same(6);
+        }
+    });
+}
+
+fn accent(ui: &egui::Ui) -> Color32 {
+    ui.visuals().hyperlink_color
+}
+
+fn card(ui: &egui::Ui) -> egui::Frame {
+    egui::Frame::new()
+        .fill(ui.visuals().faint_bg_color)
+        .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
+        .corner_radius(10)
+        .inner_margin(16)
+}
+
+fn page_heading(ui: &mut egui::Ui, title: &str, subtitle: &str) {
+    ui.heading(title);
+    ui.weak(subtitle);
+    ui.add_space(4.0);
+}
+
+fn setting(ui: &mut egui::Ui, value: &mut bool, title: &str, subtitle: &str) -> bool {
+    ui.horizontal(|ui| {
+        let text_width = (ui.available_width() - 62.0).max(0.0);
+        ui.allocate_ui_with_layout(
+            egui::vec2(text_width, 0.0),
+            egui::Layout::top_down(egui::Align::Min),
+            |ui| {
+                ui.set_min_width(text_width);
+                ui.spacing_mut().item_spacing.y = 4.0;
+                ui.label(title);
+                ui.label(
+                    RichText::new(subtitle)
+                        .small()
+                        .color(ui.visuals().weak_text_color()),
+                );
+            },
+        );
+        let (rect, mut response) =
+            ui.allocate_exact_size(egui::vec2(42.0, 24.0), egui::Sense::click());
+        if response.clicked() {
+            *value = !*value;
+            response.mark_changed();
+        }
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), *value, title)
+        });
+        let fill = if *value {
+            accent(ui)
+        } else {
+            ui.visuals().widgets.inactive.bg_fill
+        };
+        ui.painter().rect(
+            rect,
+            12.0,
+            fill,
+            ui.visuals().widgets.noninteractive.bg_stroke,
+            egui::StrokeKind::Inside,
+        );
+        let x = if *value {
+            rect.right() - 12.0
+        } else {
+            rect.left() + 12.0
+        };
+        ui.painter()
+            .circle_filled(egui::pos2(x, rect.center().y), 9.0, Color32::WHITE);
+        response.on_hover_text(title).changed()
+    })
+    .inner
 }
 
 fn modifier_controls(ui: &mut egui::Ui, modifiers: &mut Modifiers) {
@@ -589,37 +820,76 @@ impl eframe::App for App {
                     });
                 });
         }
-        egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.strong("Windows Mouse Fix");
-                ui.add_enabled_ui(self.draft.is_none() && !self.restore, |ui| {
-                    ui.selectable_value(&mut self.tab, 0, "通用");
-                    ui.selectable_value(&mut self.tab, 1, "按钮");
-                });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(if !self.ready {
-                        "未就绪"
-                    } else if self.config.enabled {
-                        "已启用"
-                    } else {
-                        "已暂停"
+        egui::TopBottomPanel::top("tabs")
+            .frame(
+                egui::Frame::new()
+                    .fill(ctx.style().visuals.panel_fill)
+                    .inner_margin(egui::Margin::symmetric(20, 12)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.strong("Windows Mouse Fix");
+                    ui.add_space(12.0);
+                    ui.add_enabled_ui(self.draft.is_none() && !self.restore, |ui| {
+                        ui.selectable_value(&mut self.tab, 0, "通用");
+                        ui.selectable_value(&mut self.tab, 1, "按钮");
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(if !self.ready {
+                            "未就绪"
+                        } else if self.config.enabled {
+                            "已启用"
+                        } else {
+                            "已暂停"
+                        });
+                        ui.colored_label(
+                            if self.ready && self.config.enabled {
+                                Color32::from_rgb(83, 200, 125)
+                            } else {
+                                ui.visuals().weak_text_color()
+                            },
+                            "●",
+                        );
                     });
                 });
             });
-        });
-        egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
-            ui.label(RichText::new(&self.status).small());
-        });
-        let mut capture = false;
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.add_enabled_ui(self.draft.is_none() && !self.restore, |ui| {
-                if self.tab == 0 {
-                    egui::ScrollArea::vertical().show(ui, |ui| self.general(ui));
-                } else {
-                    capture = self.buttons(ui);
-                }
+        egui::TopBottomPanel::bottom("status")
+            .frame(
+                egui::Frame::new()
+                    .fill(ctx.style().visuals.panel_fill)
+                    .inner_margin(egui::Margin::symmetric(20, 8)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.weak(format!("v{}", env!("CARGO_PKG_VERSION")));
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.add(egui::Label::new(RichText::new(&self.status).small()).wrap());
+                        });
+                    });
+                });
             });
-        });
+        let mut capture = false;
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::new()
+                    .fill(ctx.style().visuals.panel_fill)
+                    .inner_margin(20),
+            )
+            .show(ctx, |ui| {
+                ui.add_enabled_ui(self.draft.is_none() && !self.restore, |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt(("page", self.tab))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            if self.tab == 0 {
+                                self.general(ui);
+                            } else {
+                                capture = self.buttons(ui);
+                            }
+                        });
+                });
+            });
         capture &= !closing && ctx.input(|i| i.focused);
         if capture != self.capture {
             self.capture = capture;
